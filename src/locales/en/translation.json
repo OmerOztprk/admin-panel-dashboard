@@ -10,6 +10,15 @@
   "auth": {
     "loginSuccess": "Login successful",
     "logoutSuccess": "Logout successful",
-    "invalidCredentials": "Invalid credentials"
+    "invalidCredentials": "Invalid credentials",
+    "userCreated": "User created successfully",
+    "userUpdated": "User updated successfully",
+    "userDeleted": "User deleted successfully",
+    "passwordChanged": "Password changed successfully"
+  },
+  "user": {
+    "notFound": "User not found",
+    "emailExists": "Email already exists",
+    "accountLocked": "Account temporarily locked"
   }
 }

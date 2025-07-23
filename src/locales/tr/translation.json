@@ -10,6 +10,15 @@
   "auth": {
     "loginSuccess": "Giriş başarılı",
     "logoutSuccess": "Çıkış başarılı",
-    "invalidCredentials": "Geçersiz kimlik bilgileri"
+    "invalidCredentials": "Geçersiz kimlik bilgileri",
+    "userCreated": "Kullanıcı başarıyla oluşturuldu",
+    "userUpdated": "Kullanıcı başarıyla güncellendi",
+    "userDeleted": "Kullanıcı başarıyla silindi",
+    "passwordChanged": "Şifre başarıyla değiştirildi"
+  },
+  "user": {
+    "notFound": "Kullanıcı bulunamadı",
+    "emailExists": "E-posta adresi zaten mevcut",
+    "accountLocked": "Hesap geçici olarak kilitlendi"
   }
 }

@@ -11,6 +11,7 @@ const path = require('path');
 
 const config = require('./config');
 const connectDB = require('./config/database');
+const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 
@@ -66,13 +67,7 @@ app.get('/health', (req, res) => {
 // API routes will be added here
 
 // Global error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({
-    status: 'error',
-    message: err.message || 'Internal Server Error'
-  });
-});
+app.use(errorHandler);
 
 // 404 handler
 app.use('*', (req, res) => {
