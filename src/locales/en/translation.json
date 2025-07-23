@@ -20,5 +20,10 @@
     "notFound": "User not found",
     "emailExists": "Email already exists",
     "accountLocked": "Account temporarily locked"
+  },
+  "audit": {
+    "logsRetrieved": "Audit logs retrieved successfully",
+    "activityRetrieved": "User activity retrieved successfully",
+    "securityEventsRetrieved": "Security events retrieved successfully"
   }
 }

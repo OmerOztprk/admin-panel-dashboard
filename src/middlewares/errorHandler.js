@@ -4,7 +4,13 @@ const errorHandler = (err, req, res, next) => {
   let error = { ...err };
   error.message = err.message;
 
-  console.error('Error:', err);
+  console.error('Error:', {
+    message: err.message,
+    stack: err.stack,
+    ip: req.ip,
+    userAgent: req.get('User-Agent'),
+    url: req.originalUrl
+  });
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {
@@ -35,8 +41,8 @@ const errorHandler = (err, req, res, next) => {
   }
 
   // Default error
-  return APIResponse.error(res, 
-    error.message || req.t('errors.serverError'), 
+  return APIResponse.error(res,
+    error.message || req.t('errors.serverError'),
     error.statusCode || 500
   );
 };

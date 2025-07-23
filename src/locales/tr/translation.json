@@ -20,5 +20,10 @@
     "notFound": "Kullanıcı bulunamadı",
     "emailExists": "E-posta adresi zaten mevcut",
     "accountLocked": "Hesap geçici olarak kilitlendi"
+  },
+  "audit": {
+    "logsRetrieved": "Denetim kayıtları başarıyla getirildi",
+    "activityRetrieved": "Kullanıcı aktivitesi başarıyla getirildi",
+    "securityEventsRetrieved": "Güvenlik olayları başarıyla getirildi"
   }
 }

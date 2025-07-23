@@ -12,6 +12,7 @@ const path = require('path');
 const config = require('./config');
 const connectDB = require('./config/database');
 const errorHandler = require('./middlewares/errorHandler');
+const apiRoutes = require('./routes');
 
 const app = express();
 
@@ -64,7 +65,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes will be added here
+// API routes
+app.use('/api', apiRoutes);
 
 // Global error handler
 app.use(errorHandler);
