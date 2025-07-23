@@ -1,0 +1,15 @@
+{
+  "welcome": "Admin Panele Hoş Geldiniz",
+  "errors": {
+    "validation": "Doğrulama hatası",
+    "unauthorized": "Yetkisiz erişim",
+    "forbidden": "Erişim yasak",
+    "notFound": "Kaynak bulunamadı",
+    "serverError": "Sunucu hatası"
+  },
+  "auth": {
+    "loginSuccess": "Giriş başarılı",
+    "logoutSuccess": "Çıkış başarılı",
+    "invalidCredentials": "Geçersiz kimlik bilgileri"
+  }
+}

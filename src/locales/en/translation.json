@@ -1,0 +1,15 @@
+{
+  "welcome": "Welcome to Admin Panel",
+  "errors": {
+    "validation": "Validation error",
+    "unauthorized": "Unauthorized access",
+    "forbidden": "Access forbidden",
+    "notFound": "Resource not found",
+    "serverError": "Internal server error"
+  },
+  "auth": {
+    "loginSuccess": "Login successful",
+    "logoutSuccess": "Logout successful",
+    "invalidCredentials": "Invalid credentials"
+  }
+}
