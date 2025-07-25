@@ -1,4 +1,6 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
+const Role = require('../models/Role');
 const BlacklistedToken = require('../models/BlacklistedToken');
 const APIResponse = require('../utils/response');
 const { handleValidationErrors } = require('../utils/validation');
@@ -17,12 +19,33 @@ exports.register = async (req, res, next) => {
       return APIResponse.error(res, req.t('user.emailExists'), 400);
     }
 
+    // Get role by ID or name
+    let userRole;
+    if (role) {
+      // Try to find by ObjectId first, then by name
+      if (mongoose.Types.ObjectId.isValid(role)) {
+        userRole = await Role.findById(role);
+      } else {
+        userRole = await Role.findOne({ name: role });
+      }
+      
+      if (!userRole) {
+        return APIResponse.error(res, 'Invalid role. Role not found.', 400);
+      }
+    } else {
+      // Get default 'user' role
+      userRole = await Role.findOne({ name: 'user' });
+      if (!userRole) {
+        return APIResponse.error(res, 'Default user role not found. Please run database seeder first.', 500);
+      }
+    }
+
     // Create user
     const user = await User.create({
       name,
       email,
       password,
-      role: role || 'user'
+      role: userRole._id
     });
 
     // Generate token
@@ -35,7 +58,7 @@ exports.register = async (req, res, next) => {
       'user',
       { 
         email: user.email,
-        role: user.role,
+        role: userRole.name,
         registration_method: 'standard'
       },
       req,
@@ -238,6 +261,10 @@ exports.updateProfile = async (req, res, next) => {
     const { name, email } = req.body;
     const oldUser = await User.findById(req.user.id);
     
+    if (!oldUser) {
+      return APIResponse.notFound(res, req.t('user.notFound'));
+    }
+
     // Check if email is being changed and already exists
     if (email && email !== req.user.email) {
       const existingUser = await User.findOne({ email });

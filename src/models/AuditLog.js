@@ -14,7 +14,8 @@ const auditLogSchema = new mongoose.Schema({
       'login', 'logout', 'register', 'password_change', 'profile_update',
       'user_create', 'user_update', 'user_delete', 'failed_login',
       'account_locked', 'password_reset', 'role_change', 'status_change',
-      'user_list_access', 'user_profile_access', 'user_stats_access'
+      'user_list_access', 'user_profile_access', 'user_stats_access',
+      'access_denied'
     ]
   },
   resource: {

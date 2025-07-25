@@ -1,14 +1,27 @@
 {
   "name": "admin-panel-dashboard",
   "version": "1.0.0",
-  "description": "Admin panel backend API with JWT authentication and RBAC",
+  "description": "Enterprise admin panel backend API with dynamic RBAC system",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "test": "jest"
+    "seed": "node src/utils/seeder.js",
+    "seed:fresh": "npm run seed && npm start",
+    "test": "jest",
+    "lint": "eslint src/",
+    "format": "prettier --write src/"
   },
-  "keywords": ["admin", "dashboard", "api", "nodejs", "mongodb"],
+  "keywords": [
+    "admin",
+    "dashboard",
+    "api",
+    "nodejs",
+    "mongodb",
+    "rbac",
+    "jwt",
+    "enterprise"
+  ],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
@@ -17,21 +30,25 @@
     "dotenv": "^16.3.1",
     "cors": "^2.8.5",
     "helmet": "^7.0.0",
-    "express-rate-limit": "^6.10.0",
-    "xss-clean": "^0.1.4",
-    "express-mongo-sanitize": "^2.2.0",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "express-validator": "^7.0.1",
+    "express-rate-limit": "^6.8.1",
+    "express-mongo-sanitize": "^2.2.0",
+    "xss-clean": "^0.1.4",
     "i18next": "^23.4.4",
     "i18next-fs-backend": "^2.1.5",
     "i18next-http-middleware": "^3.3.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
-    "jest": "^29.6.2"
+    "jest": "^29.6.2",
+    "supertest": "^6.3.3",
+    "eslint": "^8.47.0",
+    "prettier": "^3.0.2"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   }
 }

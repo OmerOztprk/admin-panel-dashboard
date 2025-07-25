@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Role = require('../models/Role');
 const APIResponse = require('../utils/response');
 const { createAuditLog } = require('../middlewares/auth');
 
@@ -10,13 +11,13 @@ exports.getAllUsers = async (req, res, next) => {
     const sortBy = req.query.sortBy || 'createdAt';
     const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
     const status = req.query.status;
-    const role = req.query.role;
+    const roleId = req.query.roleId;
     const search = req.query.search;
 
     // Build filter object
     const filter = {};
     if (status) filter.status = status;
-    if (role) filter.role = role;
+    if (roleId) filter.role = roleId;
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: 'i' } },
@@ -48,7 +49,7 @@ exports.getAllUsers = async (req, res, next) => {
       'user',
       { 
         total_returned: users.length,
-        filters: { status, role, search },
+        filters: { status, roleId, search },
         pagination: { page, limit }
       },
       req,
@@ -73,7 +74,7 @@ exports.getAllUsers = async (req, res, next) => {
   }
 };
 
-// Get single user (Admin/Moderator)
+// Get single user
 exports.getUser = async (req, res, next) => {
   try {
     const user = await User.findById(req.params.id);
@@ -103,10 +104,10 @@ exports.getUser = async (req, res, next) => {
   }
 };
 
-// Create new user (Admin only)
+// Create new user
 exports.createUser = async (req, res, next) => {
   try {
-    const { name, email, password, role, status } = req.body;
+    const { name, email, password, role, additionalRoles, status } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -114,11 +115,26 @@ exports.createUser = async (req, res, next) => {
       return APIResponse.error(res, req.t('user.emailExists'), 400);
     }
 
+    // Validate role exists
+    const roleExists = await Role.findById(role);
+    if (!roleExists) {
+      return APIResponse.error(res, 'Invalid role ID', 400);
+    }
+
+    // Validate additional roles if provided
+    if (additionalRoles && additionalRoles.length > 0) {
+      const validAdditionalRoles = await Role.find({ _id: { $in: additionalRoles } });
+      if (validAdditionalRoles.length !== additionalRoles.length) {
+        return APIResponse.error(res, 'Some additional roles are invalid', 400);
+      }
+    }
+
     const user = await User.create({
       name,
       email,
       password,
-      role: role || 'user',
+      role,
+      additionalRoles: additionalRoles || [],
       status: status || 'active'
     });
 
@@ -130,7 +146,8 @@ exports.createUser = async (req, res, next) => {
       { 
         created_user: user._id,
         email: user.email,
-        role: user.role,
+        role: roleExists.name,
+        additional_roles_count: additionalRoles?.length || 0,
         status: user.status,
         created_by: req.user._id
       },
@@ -146,10 +163,10 @@ exports.createUser = async (req, res, next) => {
   }
 };
 
-// Update user (Admin/Moderator)
+// Update user
 exports.updateUser = async (req, res, next) => {
   try {
-    const { name, email, role, status } = req.body;
+    const { name, email, status } = req.body;
     const oldUser = await User.findById(req.params.id);
     
     if (!oldUser) {
@@ -167,14 +184,9 @@ exports.updateUser = async (req, res, next) => {
       }
     }
 
-    // Prevent non-admin users from updating to admin role
-    if (role === 'admin' && req.user.role !== 'admin') {
-      return APIResponse.forbidden(res, 'Only admins can assign admin role');
-    }
-
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { name, email, role, status },
+      { name, email, status },
       { new: true, runValidators: true }
     );
 
@@ -182,7 +194,6 @@ exports.updateUser = async (req, res, next) => {
     const changes = {};
     if (name !== oldUser.name) changes.name = { from: oldUser.name, to: name };
     if (email !== oldUser.email) changes.email = { from: oldUser.email, to: email };
-    if (role !== oldUser.role) changes.role = { from: oldUser.role, to: role };
     if (status !== oldUser.status) changes.status = { from: oldUser.status, to: status };
 
     await createAuditLog(
@@ -196,7 +207,7 @@ exports.updateUser = async (req, res, next) => {
       },
       req,
       'success',
-      role !== oldUser.role ? 'high' : 'medium'
+      'medium'
     );
 
     APIResponse.updated(res, { user }, req.t('auth.userUpdated'));
@@ -206,7 +217,144 @@ exports.updateUser = async (req, res, next) => {
   }
 };
 
-// Delete user (Admin only)
+// Assign role to user
+exports.assignRole = async (req, res, next) => {
+  try {
+    const { roleId } = req.body;
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      return APIResponse.notFound(res, req.t('user.notFound'));
+    }
+
+    // Validate role exists
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return APIResponse.error(res, 'Invalid role ID', 400);
+    }
+
+    const oldRole = user.role;
+    user.role = roleId;
+    await user.save();
+
+    // Log role assignment
+    await createAuditLog(
+      req.user._id,
+      'user_role_change',
+      'user',
+      { 
+        user_id: user._id,
+        user_email: user.email,
+        old_role: oldRole.name,
+        new_role: role.name,
+        assigned_by: req.user._id
+      },
+      req,
+      'success',
+      'high'
+    );
+
+    APIResponse.success(res, { user }, 'Role assigned successfully');
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Add additional role to user
+exports.addAdditionalRole = async (req, res, next) => {
+  try {
+    const { roleId } = req.body;
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      return APIResponse.notFound(res, req.t('user.notFound'));
+    }
+
+    // Validate role exists
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return APIResponse.error(res, 'Invalid role ID', 400);
+    }
+
+    // Check if role is already assigned
+    if (user.role.toString() === roleId) {
+      return APIResponse.error(res, 'This role is already the primary role', 400);
+    }
+
+    if (user.additionalRoles.includes(roleId)) {
+      return APIResponse.error(res, 'This role is already assigned as additional role', 400);
+    }
+
+    user.additionalRoles.push(roleId);
+    await user.save();
+
+    // Log additional role assignment
+    await createAuditLog(
+      req.user._id,
+      'user_additional_role_add',
+      'user',
+      { 
+        user_id: user._id,
+        user_email: user.email,
+        added_role: role.name,
+        assigned_by: req.user._id
+      },
+      req,
+      'success',
+      'medium'
+    );
+
+    APIResponse.success(res, { user }, 'Additional role added successfully');
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Remove additional role from user
+exports.removeAdditionalRole = async (req, res, next) => {
+  try {
+    const { roleId } = req.params;
+    const user = await User.findById(req.params.id);
+    
+    if (!user) {
+      return APIResponse.notFound(res, req.t('user.notFound'));
+    }
+
+    // Check if role exists in additional roles
+    if (!user.additionalRoles.includes(roleId)) {
+      return APIResponse.error(res, 'Role is not assigned as additional role', 400);
+    }
+
+    const role = await Role.findById(roleId);
+    user.additionalRoles = user.additionalRoles.filter(id => id.toString() !== roleId);
+    await user.save();
+
+    // Log additional role removal
+    await createAuditLog(
+      req.user._id,
+      'user_additional_role_remove',
+      'user',
+      { 
+        user_id: user._id,
+        user_email: user.email,
+        removed_role: role?.name || 'Unknown',
+        removed_by: req.user._id
+      },
+      req,
+      'success',
+      'medium'
+    );
+
+    APIResponse.success(res, { user }, 'Additional role removed successfully');
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete user
 exports.deleteUser = async (req, res, next) => {
   try {
     // Prevent admin from deleting themselves
@@ -228,7 +376,7 @@ exports.deleteUser = async (req, res, next) => {
       { 
         deleted_user: user._id,
         deleted_user_email: user.email,
-        deleted_user_role: user.role,
+        deleted_user_role: user.role.name,
         deleted_by: req.user._id
       },
       req,
@@ -243,7 +391,7 @@ exports.deleteUser = async (req, res, next) => {
   }
 };
 
-// Get user statistics (Admin only)
+// Get user statistics
 exports.getUserStats = async (req, res, next) => {
   try {
     const stats = await User.aggregate([
@@ -264,12 +412,27 @@ exports.getUserStats = async (req, res, next) => {
       }
     ]);
 
-    const roleStats = await User.aggregate([
+    const roleDistribution = await User.aggregate([
+      {
+        $lookup: {
+          from: 'roles',
+          localField: 'role',
+          foreignField: '_id',
+          as: 'roleInfo'
+        }
+      },
+      {
+        $unwind: '$roleInfo'
+      },
       {
         $group: {
-          _id: '$role',
-          count: { $sum: 1 }
+          _id: '$roleInfo.displayName',
+          count: { $sum: 1 },
+          color: { $first: '$roleInfo.color' }
         }
+      },
+      {
+        $sort: { count: -1 }
       }
     ]);
 
@@ -293,7 +456,7 @@ exports.getUserStats = async (req, res, next) => {
         inactiveUsers: 0,
         suspendedUsers: 0
       },
-      roleDistribution: roleStats
+      roleDistribution
     }, 'User statistics retrieved successfully');
 
   } catch (error) {

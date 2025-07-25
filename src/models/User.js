@@ -27,10 +27,14 @@ const userSchema = new mongoose.Schema({
     select: false
   },
   role: {
-    type: String,
-    enum: ['user', 'moderator', 'admin'],
-    default: 'user'
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role',
+    required: [true, 'Role is required']
   },
+  additionalRoles: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Role'
+  }],
   status: {
     type: String,
     enum: ['active', 'inactive', 'suspended'],
@@ -68,6 +72,39 @@ userSchema.virtual('isLocked').get(function() {
   return !!(this.lockUntil && this.lockUntil > Date.now());
 });
 
+// Virtual for all permissions (including additional roles)
+userSchema.virtual('allPermissions').get(function() {
+  const permissions = new Set();
+  
+  // Add permissions from primary role
+  if (this.role && this.role.permissions) {
+    this.role.permissions.forEach(perm => permissions.add(perm.name));
+  }
+  
+  // Add permissions from additional roles
+  if (this.additionalRoles) {
+    this.additionalRoles.forEach(role => {
+      if (role.permissions) {
+        role.permissions.forEach(perm => permissions.add(perm.name));
+      }
+    });
+  }
+  
+  return Array.from(permissions);
+});
+
+// Populate role and additional roles
+userSchema.pre(/^find/, function(next) {
+  this.populate({
+    path: 'role',
+    select: 'name displayName permissions level color icon'
+  }).populate({
+    path: 'additionalRoles',
+    select: 'name displayName permissions level color icon'
+  });
+  next();
+});
+
 // Hash password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
@@ -86,17 +123,33 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Generate JWT token
+// Enhanced JWT token with permissions
 userSchema.methods.generateAuthToken = function() {
   return jwt.sign(
     { 
       id: this._id, 
       email: this.email,
-      role: this.role 
+      role: this.role.name,
+      permissions: this.allPermissions
     },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn }
   );
+};
+
+// Check if user has permission
+userSchema.methods.hasPermission = function(permission) {
+  return this.allPermissions.includes(permission);
+};
+
+// Check if user has any of the permissions
+userSchema.methods.hasAnyPermission = function(permissions) {
+  return permissions.some(perm => this.allPermissions.includes(perm));
+};
+
+// Check if user has all permissions
+userSchema.methods.hasAllPermissions = function(permissions) {
+  return permissions.every(perm => this.allPermissions.includes(perm));
 };
 
 // Handle failed login attempts

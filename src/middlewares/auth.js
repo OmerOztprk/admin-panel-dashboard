@@ -54,7 +54,7 @@ exports.protect = async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, config.jwt.secret);
 
-    // Get user from token
+    // Get user from token with populated roles
     const user = await User.findById(decoded.id);
     if (!user) {
       // Log suspicious activity
@@ -142,19 +142,19 @@ exports.protect = async (req, res, next) => {
   }
 };
 
-// Restrict to specific roles
-exports.restrictTo = (...roles) => {
+// Permission-based access control
+exports.requirePermission = (permission) => {
   return async (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    if (!req.user.hasPermission(permission)) {
       // Log unauthorized access attempt
       await createAuditLog(
         req.user._id,
-        'failed_login',
+        'access_denied',
         'auth',
         { 
-          reason: 'insufficient_privileges',
-          required_roles: roles,
-          user_role: req.user.role,
+          reason: 'insufficient_permissions',
+          required_permission: permission,
+          user_permissions: req.user.allPermissions,
           attempted_resource: req.originalUrl
         },
         req,
@@ -165,18 +165,135 @@ exports.restrictTo = (...roles) => {
       return res.status(403).json({
         status: 'error',
         message: req.t('errors.forbidden'),
-        code: 'INSUFFICIENT_PRIVILEGES'
+        code: 'INSUFFICIENT_PERMISSIONS',
+        required: permission
       });
     }
     next();
   };
 };
 
-// Admin only access
-exports.adminOnly = exports.restrictTo('admin');
+// Multiple permissions (user must have ANY of them)
+exports.requireAnyPermission = (permissions) => {
+  return async (req, res, next) => {
+    if (!req.user.hasAnyPermission(permissions)) {
+      await createAuditLog(
+        req.user._id,
+        'access_denied',
+        'auth',
+        { 
+          reason: 'insufficient_permissions',
+          required_permissions: permissions,
+          user_permissions: req.user.allPermissions,
+          attempted_resource: req.originalUrl
+        },
+        req,
+        'failure',
+        'high'
+      );
+      
+      return res.status(403).json({
+        status: 'error',
+        message: req.t('errors.forbidden'),
+        code: 'INSUFFICIENT_PERMISSIONS',
+        required: permissions
+      });
+    }
+    next();
+  };
+};
 
-// Admin or moderator access
-exports.adminOrModerator = exports.restrictTo('admin', 'moderator');
+// Multiple permissions (user must have ALL of them)
+exports.requireAllPermissions = (permissions) => {
+  return async (req, res, next) => {
+    if (!req.user.hasAllPermissions(permissions)) {
+      await createAuditLog(
+        req.user._id,
+        'access_denied',
+        'auth',
+        { 
+          reason: 'insufficient_permissions',
+          required_permissions: permissions,
+          user_permissions: req.user.allPermissions,
+          attempted_resource: req.originalUrl
+        },
+        req,
+        'failure',
+        'high'
+      );
+      
+      return res.status(403).json({
+        status: 'error',
+        message: req.t('errors.forbidden'),
+        code: 'INSUFFICIENT_PERMISSIONS',
+        required: permissions
+      });
+    }
+    next();
+  };
+};
+
+// Legacy role-based access (for backward compatibility)
+exports.restrictTo = (...roles) => {
+  return async (req, res, next) => {
+    const userRoleName = req.user.role.name;
+    if (!roles.includes(userRoleName)) {
+      await createAuditLog(
+        req.user._id,
+        'access_denied',
+        'auth',
+        { 
+          reason: 'insufficient_role',
+          required_roles: roles,
+          user_role: userRoleName,
+          attempted_resource: req.originalUrl
+        },
+        req,
+        'failure',
+        'high'
+      );
+      
+      return res.status(403).json({
+        status: 'error',
+        message: req.t('errors.forbidden'),
+        code: 'INSUFFICIENT_ROLE'
+      });
+    }
+    next();
+  };
+};
+
+// Super admin check (highest level role)
+exports.requireSuperAdmin = async (req, res, next) => {
+  if (req.user.role.level < 90) { // Super admin level
+    await createAuditLog(
+      req.user._id,
+      'access_denied',
+      'auth',
+      { 
+        reason: 'requires_super_admin',
+        user_level: req.user.role.level,
+        attempted_resource: req.originalUrl
+      },
+      req,
+      'failure',
+      'critical'
+    );
+    
+    return res.status(403).json({
+      status: 'error',
+      message: 'Super admin access required',
+      code: 'REQUIRES_SUPER_ADMIN'
+    });
+  }
+  next();
+};
+
+// Admin only access (backward compatibility)
+exports.adminOnly = exports.requirePermission('system:manage');
+
+// Admin or moderator access (backward compatibility)
+exports.adminOrModerator = exports.requireAnyPermission(['system:manage', 'user:manage']);
 
 // Export audit log helper for use in controllers
 exports.createAuditLog = createAuditLog;

@@ -1,9 +1,15 @@
 const express = require('express');
 const userController = require('../controllers/userController');
-const { protect, adminOnly, adminOrModerator } = require('../middlewares/auth');
 const { 
-  validateRegister, 
+  protect, 
+  requirePermission, 
+  requireAnyPermission,
+  requireSuperAdmin 
+} = require('../middlewares/auth');
+const { 
+  validateCreateUser, 
   validateUpdateUser,
+  validateAssignRole,
   handleValidationErrors 
 } = require('../utils/validation');
 
@@ -12,26 +18,64 @@ const router = express.Router();
 // All routes are protected
 router.use(protect);
 
-// Admin/Moderator routes
-router.get('/', adminOrModerator, userController.getAllUsers);
-router.get('/stats', adminOnly, userController.getUserStats);
-router.get('/:id', adminOrModerator, userController.getUser);
+// Get all users (requires user:read permission)
+router.get('/', 
+  requirePermission('user:read'), 
+  userController.getAllUsers
+);
 
-// Admin only routes
-router.post('/', 
-  adminOnly,
-  validateRegister, 
-  handleValidationErrors, 
+// Get user statistics (requires user:read permission)
+router.get('/stats', 
+  requirePermission('user:read'), 
+  userController.getUserStats
+);
+
+// Get user by ID (requires user:read permission)
+router.get('/:id', 
+  requirePermission('user:read'), 
+  userController.getUser
+);
+
+// Create new user (requires user:create permission)
+router.post('/',
+  requirePermission('user:create'),
+  validateCreateUser,
+  handleValidationErrors,
   userController.createUser
 );
 
-router.put('/:id', 
-  adminOrModerator,
-  validateUpdateUser, 
-  handleValidationErrors, 
+// Update user (requires user:update permission)
+router.put('/:id',
+  requirePermission('user:update'),
+  validateUpdateUser,
+  handleValidationErrors,
   userController.updateUser
 );
 
-router.delete('/:id', adminOnly, userController.deleteUser);
+// Assign role to user (requires user:update permission)
+router.put('/:id/role',
+  requirePermission('user:update'),
+  validateAssignRole,
+  handleValidationErrors,
+  userController.assignRole
+);
+
+// Add additional role to user (requires user:update permission)
+router.put('/:id/additional-roles',
+  requirePermission('user:update'),
+  userController.addAdditionalRole
+);
+
+// Remove additional role from user (requires user:update permission)
+router.delete('/:id/additional-roles/:roleId',
+  requirePermission('user:update'),
+  userController.removeAdditionalRole
+);
+
+// Delete user (requires user:delete permission)
+router.delete('/:id', 
+  requirePermission('user:delete'),
+  userController.deleteUser
+);
 
 module.exports = router;
