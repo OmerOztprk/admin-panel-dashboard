@@ -1,407 +1,259 @@
 const mongoose = require('mongoose');
-const User = require('../models/User');
-const Role = require('../models/Role');
-const BlacklistedToken = require('../models/BlacklistedToken');
 const APIResponse = require('../utils/response');
 const { handleValidationErrors } = require('../utils/validation');
-const { createAuditLog } = require('../middlewares/auth');
-const jwt = require('jsonwebtoken');
-const config = require('../config');
+const { authService, auditService } = require('../services');
 
-// Register new user
-exports.register = async (req, res, next) => {
-  try {
-    const { name, email, password, role } = req.body;
+/**
+ * Authentication Controller
+ * Handles HTTP requests and delegates business logic to AuthService
+ */
+class AuthController {
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return APIResponse.error(res, req.t('user.emailExists'), 400);
-    }
+  // Register new user
+  async register(req, res, next) {
+    try {
+      // Handle validation errors
+      handleValidationErrors(req, res, () => {});
 
-    // Get role by ID or name
-    let userRole;
-    if (role) {
-      // Try to find by ObjectId first, then by name
-      if (mongoose.Types.ObjectId.isValid(role)) {
-        userRole = await Role.findById(role);
-      } else {
-        userRole = await Role.findOne({ name: role });
-      }
-      
-      if (!userRole) {
-        return APIResponse.error(res, 'Invalid role. Role not found.', 400);
-      }
-    } else {
-      // Get default 'user' role
-      userRole = await Role.findOne({ name: 'user' });
-      if (!userRole) {
-        return APIResponse.error(res, 'Default user role not found. Please run database seeder first.', 500);
-      }
-    }
+      const result = await authService.register(req.body, req);
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role: userRole._id
-    });
+      // Create audit log
+      await auditService.createLog(
+        result.user.id,
+        'register',
+        'user',
+        { 
+          email: result.user.email,
+          role: result.role.name,
+          registration_method: 'standard'
+        },
+        req,
+        'success',
+        'low'
+      );
 
-    // Generate token
-    const token = user.generateAuthToken();
+      APIResponse.created(res, {
+        user: result.user,
+        token: result.token
+      }, req.t('auth.userCreated'));
 
-    // Create audit log
-    await createAuditLog(
-      user._id,
-      'register',
-      'user',
-      { 
-        email: user.email,
-        role: userRole.name,
-        registration_method: 'standard'
-      },
-      req,
-      'success',
-      'low'
-    );
-
-    // Remove password from response
-    user.password = undefined;
-
-    APIResponse.created(res, {
-      user,
-      token
-    }, req.t('auth.userCreated'));
-
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Enhanced login with detailed audit logging
-exports.login = async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-
-    // Get user with password
-    const user = await User.findOne({ email }).select('+password');
-    
-    if (!user) {
-      // Log failed login attempt
-      await createAuditLog(
+    } catch (error) {
+      // Create audit log for failed registration
+      await auditService.createLog(
         null,
-        'failed_login',
-        'auth',
+        'register',
+        'user',
         { 
-          email,
-          reason: 'user_not_found'
+          email: req.body.email,
+          error: error.message
         },
         req,
         'failure',
         'medium'
       );
-      
-      return APIResponse.error(res, req.t('auth.invalidCredentials'), 401);
-    }
 
-    // Check if account is locked
-    if (user.isLocked) {
-      await createAuditLog(
-        user._id,
-        'failed_login',
+      next(error);
+    }
+  }
+
+  // Login user
+  async login(req, res, next) {
+    try {
+      handleValidationErrors(req, res, () => {});
+
+      const result = await authService.login(req.body, req);
+
+      // Create audit log for successful login
+      await auditService.createLog(
+        result.user.id,
+        'login',
         'auth',
         { 
-          reason: 'account_locked',
-          lockUntil: user.lockUntil
+          login_method: 'password',
+          user_agent: req.get('User-Agent'),
+          last_login: result.lastLogin
         },
         req,
-        'failure',
-        'medium'
+        'success',
+        'low'
       );
-      
-      return APIResponse.error(res, req.t('user.accountLocked'), 423);
-    }
 
-    // Check if account is active
-    if (user.status !== 'active') {
-      await createAuditLog(
-        user._id,
+      APIResponse.success(res, {
+        user: result.user,
+        token: result.token
+      }, req.t('auth.loginSuccess'));
+
+    } catch (error) {
+      // Create audit log for failed login
+      const auditData = error.auditData || { 
+        email: req.body.email,
+        error: error.message 
+      };
+      
+      await auditService.createLog(
+        auditData.userId || null,
         'failed_login',
         'auth',
-        { 
-          reason: 'account_inactive',
-          status: user.status
-        },
+        auditData,
         req,
         'failure',
-        'medium'
+        error.code === 'ACCOUNT_LOCKED' ? 'high' : 'medium'
       );
-      
-      return APIResponse.error(res, req.t('errors.unauthorized'), 401);
-    }
 
-    // Check password
-    const isPasswordCorrect = await user.comparePassword(password);
-    
-    if (!isPasswordCorrect) {
-      // Increment login attempts
-      await user.incLoginAttempts();
-      
-      // Log failed login
-      await createAuditLog(
-        user._id,
-        'failed_login',
+      next(error);
+    }
+  }
+
+  // Logout user
+  async logout(req, res, next) {
+    try {
+      const result = await authService.logout(req.token, req.user.id, req);
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'logout',
         'auth',
         { 
-          reason: 'invalid_password',
-          attempts: user.loginAttempts + 1
+          logout_method: 'manual',
+          token_expires_at: result.tokenExpiration
         },
         req,
-        'failure',
-        user.loginAttempts >= 3 ? 'high' : 'medium'
+        'success',
+        'low'
       );
+
+      APIResponse.success(res, null, req.t('auth.logoutSuccess'));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get current user profile
+  async getProfile(req, res, next) {
+    try {
+      // User is already available from auth middleware
+      const user = req.user;
       
-      return APIResponse.error(res, req.t('auth.invalidCredentials'), 401);
+      APIResponse.success(res, { user }, 'Profile retrieved successfully');
+
+    } catch (error) {
+      next(error);
     }
-
-    // Reset login attempts on successful login
-    await user.resetLoginAttempts();
-
-    // Generate token
-    const token = user.generateAuthToken();
-
-    // Log successful login
-    await createAuditLog(
-      user._id,
-      'login',
-      'auth',
-      { 
-        login_method: 'password',
-        user_agent: req.get('User-Agent'),
-        last_login: user.lastLogin
-      },
-      req,
-      'success',
-      'low'
-    );
-
-    // Remove password from response
-    user.password = undefined;
-
-    APIResponse.success(res, {
-      user,
-      token
-    }, req.t('auth.loginSuccess'));
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Enhanced logout with token blacklisting
-exports.logout = async (req, res, next) => {
-  try {
-    const token = req.token;
-    const user = req.user;
+  // Update user profile
+  async updateProfile(req, res, next) {
+    try {
+      handleValidationErrors(req, res, () => {});
 
-    // Decode token to get expiration
-    const decoded = jwt.decode(token);
-    const expiresAt = new Date(decoded.exp * 1000);
+      const result = await authService.updateProfile(req.user.id, req.body);
 
-    // Add token to blacklist
-    await BlacklistedToken.create({
-      token,
-      userId: user._id,
-      reason: 'logout',
-      userAgent: req.get('User-Agent'),
-      ipAddress: req.ip || req.connection.remoteAddress,
-      expiresAt
-    });
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'profile_update',
+        'user',
+        { 
+          changes: result.changes,
+          updated_by: 'self'
+        },
+        req,
+        'success',
+        'low'
+      );
 
-    // Log logout
-    await createAuditLog(
-      user._id,
-      'logout',
-      'auth',
-      { 
-        logout_method: 'manual',
-        token_expires_at: expiresAt
-      },
-      req,
-      'success',
-      'low'
-    );
+      APIResponse.updated(res, { user: result.user }, req.t('auth.userUpdated'));
 
-    APIResponse.success(res, null, req.t('auth.logoutSuccess'));
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Get current user profile
-exports.getProfile = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user.id);
-    
-    if (!user) {
-      return APIResponse.notFound(res, req.t('user.notFound'));
+    } catch (error) {
+      next(error);
     }
-
-    APIResponse.success(res, { user }, 'Profile retrieved successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Enhanced profile update with audit logging
-exports.updateProfile = async (req, res, next) => {
-  try {
-    const { name, email } = req.body;
-    const oldUser = await User.findById(req.user.id);
-    
-    if (!oldUser) {
-      return APIResponse.notFound(res, req.t('user.notFound'));
-    }
+  // Change password
+  async changePassword(req, res, next) {
+    try {
+      handleValidationErrors(req, res, () => {});
 
-    // Check if email is being changed and already exists
-    if (email && email !== req.user.email) {
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return APIResponse.error(res, req.t('user.emailExists'), 400);
-      }
-    }
+      const result = await authService.changePassword(
+        req.user.id, 
+        req.body, 
+        req.token, 
+        req
+      );
 
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      { name, email },
-      { new: true, runValidators: true }
-    );
-
-    // Log profile update
-    const changes = {};
-    if (name !== oldUser.name) changes.name = { from: oldUser.name, to: name };
-    if (email !== oldUser.email) changes.email = { from: oldUser.email, to: email };
-
-    await createAuditLog(
-      user._id,
-      'profile_update',
-      'user',
-      { 
-        changes,
-        updated_by: 'self'
-      },
-      req,
-      'success',
-      'low'
-    );
-
-    APIResponse.updated(res, { user }, req.t('auth.userUpdated'));
-
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Enhanced password change with security measures
-exports.changePassword = async (req, res, next) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    // Get user with password
-    const user = await User.findById(req.user.id).select('+password');
-
-    // Check current password
-    const isCurrentPasswordCorrect = await user.comparePassword(currentPassword);
-    if (!isCurrentPasswordCorrect) {
-      // Log failed password change
-      await createAuditLog(
-        user._id,
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
         'password_change',
         'auth',
-        { reason: 'incorrect_current_password' },
+        { 
+          method: 'self_change',
+          tokens_invalidated: result.tokenInvalidated
+        },
+        req,
+        'success',
+        'medium'
+      );
+
+      APIResponse.success(res, null, req.t('auth.passwordChanged'));
+
+    } catch (error) {
+      // Create audit log for failed password change
+      const auditData = error.auditData || { 
+        error: error.message 
+      };
+      
+      await auditService.createLog(
+        req.user.id,
+        'password_change',
+        'auth',
+        auditData,
         req,
         'failure',
         'high'
       );
-      
-      return APIResponse.error(res, 'Current password is incorrect', 400);
+
+      next(error);
     }
-
-    // Update password
-    user.password = newPassword;
-    await user.save();
-
-    // Invalidate current token
-    const decoded = jwt.decode(req.token);
-    const expiresAt = new Date(decoded.exp * 1000);
-    
-    await BlacklistedToken.create({
-      token: req.token,
-      userId: user._id,
-      reason: 'password_change',
-      userAgent: req.get('User-Agent'),
-      ipAddress: req.ip || req.connection.remoteAddress,
-      expiresAt
-    });
-
-    // Log successful password change
-    await createAuditLog(
-      user._id,
-      'password_change',
-      'auth',
-      { 
-        method: 'self_change',
-        tokens_invalidated: true
-      },
-      req,
-      'success',
-      'medium'
-    );
-
-    APIResponse.success(res, null, req.t('auth.passwordChanged'));
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Enhanced Force logout all sessions 
-exports.forceLogoutAll = async (req, res, next) => {
-  try {
-    const user = req.user;
-    
-    // Invalidate current token
-    const decoded = jwt.decode(req.token);
-    const expiresAt = new Date(decoded.exp * 1000);
-    
-    await BlacklistedToken.create({
-      token: req.token,
-      userId: user._id,
-      reason: 'force_logout',
-      userAgent: req.get('User-Agent'),
-      ipAddress: req.ip || req.connection.remoteAddress,
-      expiresAt
-    });
+  // Force logout all sessions
+  async forceLogoutAll(req, res, next) {
+    try {
+      const result = await authService.logout(req.token, req.user.id, req);
 
-    // Log force logout
-    await createAuditLog(
-      user._id,
-      'logout',
-      'auth',
-      { 
-        logout_method: 'force_all_sessions',
-        initiated_by: 'user',
-        note: 'In a production system, this would invalidate all user tokens'
-      },
-      req,
-      'success',
-      'medium'
-    );
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'logout',
+        'auth',
+        { 
+          logout_method: 'force_all_sessions',
+          initiated_by: 'user',
+          note: 'In a production system, this would invalidate all user tokens'
+        },
+        req,
+        'success',
+        'medium'
+      );
 
-    APIResponse.success(res, null, 'All sessions logged out successfully');
-  } catch (error) {
-    next(error);
+      APIResponse.success(res, null, 'All sessions logged out successfully');
+    } catch (error) {
+      next(error);
+    }
   }
+}
+
+// Export instance methods
+const authController = new AuthController();
+
+module.exports = {
+  register: authController.register.bind(authController),
+  login: authController.login.bind(authController),
+  logout: authController.logout.bind(authController),
+  getProfile: authController.getProfile.bind(authController),
+  updateProfile: authController.updateProfile.bind(authController),
+  changePassword: authController.changePassword.bind(authController),
+  forceLogoutAll: authController.forceLogoutAll.bind(authController)
 };

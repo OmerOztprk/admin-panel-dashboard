@@ -1,203 +1,226 @@
-const Permission = require('../models/Permission');
 const APIResponse = require('../utils/response');
-const { createAuditLog } = require('../middlewares/auth');
+const { handleValidationErrors } = require('../utils/validation');
+const { permissionService, auditService } = require('../services');
 
-// Get all permissions
-exports.getAllPermissions = async (req, res, next) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const category = req.query.category;
-    const isActive = req.query.isActive;
-    const search = req.query.search;
+/**
+ * Permission Management Controller
+ * Handles HTTP requests and delegates business logic to PermissionService
+ */
+class PermissionController {
 
-    // Build filter
-    const filter = {};
-    if (category) filter.category = category;
-    if (isActive !== undefined) filter.isActive = isActive === 'true';
-    if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { displayName: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
+  // Get all permissions with filtering and pagination
+  async getAllPermissions(req, res, next) {
+    try {
+      const result = await permissionService.getAllPermissions(req.query);
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'list',
+        'permission',
+        { 
+          filters: req.query,
+          resultCount: result.data.length,
+          totalPermissions: result.pagination.total
+        },
+        req,
+        'success',
+        'low'
+      );
+
+      APIResponse.success(res, result, 'Permissions retrieved successfully');
+    } catch (error) {
+      next(error);
     }
-
-    const skip = (page - 1) * limit;
-
-    const permissions = await Permission.find(filter)
-      .sort({ category: 1, name: 1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Permission.countDocuments(filter);
-
-    // Log access
-    await createAuditLog(
-      req.user._id,
-      'permission_list_access',
-      'system',
-      { total_returned: permissions.length, filters: { category, isActive, search } },
-      req,
-      'success',
-      'low'
-    );
-
-    APIResponse.success(res, {
-      permissions,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalPermissions: total,
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1,
-        limit
-      }
-    }, 'Permissions retrieved successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Get permission by ID
-exports.getPermission = async (req, res, next) => {
-  try {
-    const permission = await Permission.findById(req.params.id);
-    
-    if (!permission) {
-      return APIResponse.notFound(res, 'Permission not found');
+  // Get permission by ID
+  async getPermission(req, res, next) {
+    try {
+      const permission = await permissionService.getPermissionById(req.params.id);
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'view',
+        'permission',
+        { 
+          permissionId: req.params.id,
+          permissionName: permission.name,
+          usageCount: permission.usageCount
+        },
+        req,
+        'success',
+        'low'
+      );
+
+      APIResponse.success(res, { permission }, 'Permission retrieved successfully');
+    } catch (error) {
+      next(error);
     }
-
-    APIResponse.success(res, { permission }, 'Permission retrieved successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Create new permission
-exports.createPermission = async (req, res, next) => {
-  try {
-    const { displayName, description, category, resource, action } = req.body;
+  // Create new permission
+  async createPermission(req, res, next) {
+    try {
+      handleValidationErrors(req, res, () => {});
 
-    const permission = await Permission.create({
-      displayName,
-      description,
-      category,
-      resource,
-      action
-    });
+      const result = await permissionService.createPermission(req.body);
 
-    // Log creation
-    await createAuditLog(
-      req.user._id,
-      'permission_create',
-      'system',
-      { 
-        created_permission: permission._id,
-        name: permission.name,
-        resource: permission.resource,
-        action: permission.action
-      },
-      req,
-      'success',
-      'medium'
-    );
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'create',
+        'permission',
+        { 
+          createdPermissionId: result.permission.id,
+          permissionName: result.permission.name,
+          generatedName: result.generatedName,
+          isCustomPermission: result.isCustomPermission
+        },
+        req,
+        'success',
+        'high'
+      );
 
-    APIResponse.created(res, { permission }, 'Permission created successfully');
+      APIResponse.created(res, { permission: result.permission }, 'Permission created successfully');
+    } catch (error) {
+      // Create audit log for failed permission creation
+      await auditService.createLog(
+        req.user.id,
+        'create',
+        'permission',
+        { 
+          attemptedResource: req.body.resource,
+          attemptedAction: req.body.action,
+          error: error.message
+        },
+        req,
+        'failure',
+        'high'
+      );
 
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Update permission
-exports.updatePermission = async (req, res, next) => {
-  try {
-    const { displayName, description, category, isActive } = req.body;
-    const oldPermission = await Permission.findById(req.params.id);
-    
-    if (!oldPermission) {
-      return APIResponse.notFound(res, 'Permission not found');
+      next(error);
     }
-
-    const permission = await Permission.findByIdAndUpdate(
-      req.params.id,
-      { displayName, description, category, isActive },
-      { new: true, runValidators: true }
-    );
-
-    // Log changes
-    const changes = {};
-    if (displayName !== oldPermission.displayName) changes.displayName = { from: oldPermission.displayName, to: displayName };
-    if (description !== oldPermission.description) changes.description = { from: oldPermission.description, to: description };
-    if (category !== oldPermission.category) changes.category = { from: oldPermission.category, to: category };
-    if (isActive !== oldPermission.isActive) changes.isActive = { from: oldPermission.isActive, to: isActive };
-
-    await createAuditLog(
-      req.user._id,
-      'permission_update',
-      'system',
-      { 
-        updated_permission: permission._id,
-        changes
-      },
-      req,
-      'success',
-      'medium'
-    );
-
-    APIResponse.updated(res, { permission }, 'Permission updated successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Delete permission
-exports.deletePermission = async (req, res, next) => {
-  try {
-    const permission = await Permission.findByIdAndDelete(req.params.id);
-    
-    if (!permission) {
-      return APIResponse.notFound(res, 'Permission not found');
+  // Update permission
+  async updatePermission(req, res, next) {
+    try {
+      handleValidationErrors(req, res, () => {});
+
+      const result = await permissionService.updatePermission(req.params.id, req.body);
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'update',
+        'permission',
+        { 
+          permissionId: req.params.id,
+          changes: result.changes,
+          affectsSystemRoles: result.affectsSystemRoles,
+          updatedBy: req.user.email
+        },
+        req,
+        'success',
+        result.affectsSystemRoles ? 'critical' : 'high'
+      );
+
+      APIResponse.updated(res, { permission: result.permission }, 'Permission updated successfully');
+    } catch (error) {
+      // Create audit log for failed permission update
+      await auditService.createLog(
+        req.user.id,
+        'update',
+        'permission',
+        { 
+          permissionId: req.params.id,
+          error: error.message
+        },
+        req,
+        'failure',
+        'high'
+      );
+
+      next(error);
     }
-
-    // Log deletion
-    await createAuditLog(
-      req.user._id,
-      'permission_delete',
-      'system',
-      { 
-        deleted_permission: permission._id,
-        name: permission.name,
-        resource: permission.resource,
-        action: permission.action
-      },
-      req,
-      'success',
-      'high'
-    );
-
-    APIResponse.deleted(res, 'Permission deleted successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Get permission categories
-exports.getPermissionCategories = async (req, res, next) => {
-  try {
-    const categories = await Permission.aggregate([
-      { $group: { _id: '$category', count: { $sum: 1 } } },
-      { $sort: { _id: 1 } }
-    ]);
+  // Delete permission
+  async deletePermission(req, res, next) {
+    try {
+      const result = await permissionService.deletePermission(req.params.id);
 
-    APIResponse.success(res, { categories }, 'Permission categories retrieved successfully');
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'delete',
+        'permission',
+        { 
+          deletedPermission: result.deletedPermission,
+          rolesAffected: result.rolesAffected,
+          deletedBy: req.user.email
+        },
+        req,
+        'success',
+        'critical'
+      );
 
-  } catch (error) {
-    next(error);
+      APIResponse.deleted(res, null, 'Permission deleted successfully');
+    } catch (error) {
+      // Create audit log for failed permission deletion
+      await auditService.createLog(
+        req.user.id,
+        'delete',
+        'permission',
+        { 
+          permissionId: req.params.id,
+          error: error.message
+        },
+        req,
+        'failure',
+        'high'
+      );
+
+      next(error);
+    }
   }
+
+  // Get permission categories
+  async getPermissionCategories(req, res, next) {
+    try {
+      const categories = await permissionService.getPermissionCategories();
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'categories',
+        'permission',
+        { 
+          requestedBy: req.user.email,
+          categoriesCount: categories.length
+        },
+        req,
+        'success',
+        'low'
+      );
+
+      APIResponse.success(res, { categories }, 'Permission categories retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+
+// Export instance methods
+const permissionController = new PermissionController();
+
+module.exports = {
+  getAllPermissions: permissionController.getAllPermissions.bind(permissionController),
+  getPermission: permissionController.getPermission.bind(permissionController),
+  createPermission: permissionController.createPermission.bind(permissionController),
+  updatePermission: permissionController.updatePermission.bind(permissionController),
+  deletePermission: permissionController.deletePermission.bind(permissionController),
+  getPermissionCategories: permissionController.getPermissionCategories.bind(permissionController)
 };

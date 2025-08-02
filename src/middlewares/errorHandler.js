@@ -12,6 +12,12 @@ const errorHandler = (err, req, res, next) => {
     url: req.originalUrl
   });
 
+  // AuditLog hatalarını özel olarak handle edelim
+  if (err.message && err.message.includes('AuditLog validation failed')) {
+    console.error('AuditLog validation error - continuing without audit log');
+    // Audit log hatasını logla ama uygulamayı crash etme
+  }
+
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {
     const message = req.t('errors.notFound');

@@ -15,6 +15,11 @@ process.on('SIGTERM', () => {
   });
 });
 
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received. Exiting gracefully...');
+  server.close(() => process.exit(0));
+});
+
 process.on('unhandledRejection', (err) => {
   console.log('💥 UNHANDLED REJECTION! Shutting down...');
   console.log(err.name, err.message);

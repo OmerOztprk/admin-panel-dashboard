@@ -57,16 +57,20 @@ exports.protect = async (req, res, next) => {
     // Get user from token with populated roles
     const user = await User.findById(decoded.id);
     if (!user) {
-      // Log suspicious activity
-      await createAuditLog(
-        decoded.id, 
-        'failed_login', 
-        'auth',
-        { reason: 'user_not_found', token_payload: decoded },
-        req,
-        'failure',
-        'high'
-      );
+      // Log suspicious activity - güvenli şekilde
+      try {
+        await createAuditLog(
+          null, // userId null çünkü user bulunamadı
+          'failed_login', 
+          'auth',
+          { reason: 'user_not_found', token_payload: decoded },
+          req,
+          'failure',
+          'high'
+        );
+      } catch (auditError) {
+        console.error('Audit log error:', auditError.message);
+      }
       
       return res.status(401).json({
         status: 'error',
@@ -76,15 +80,19 @@ exports.protect = async (req, res, next) => {
 
     // Check if user is active
     if (user.status !== 'active') {
-      await createAuditLog(
-        user._id,
-        'failed_login',
-        'auth',
-        { reason: 'account_inactive', status: user.status },
-        req,
-        'failure',
-        'medium'
-      );
+      try {
+        await createAuditLog(
+          user._id,
+          'failed_login',
+          'auth',
+          { reason: 'account_inactive', status: user.status },
+          req,
+          'failure',
+          'medium'
+        );
+      } catch (auditError) {
+        console.error('Audit log error:', auditError.message);
+      }
       
       return res.status(401).json({
         status: 'error',
@@ -94,15 +102,19 @@ exports.protect = async (req, res, next) => {
 
     // Check if user is locked
     if (user.isLocked) {
-      await createAuditLog(
-        user._id,
-        'failed_login',
-        'auth',
-        { reason: 'account_locked', lockUntil: user.lockUntil },
-        req,
-        'failure',
-        'medium'
-      );
+      try {
+        await createAuditLog(
+          user._id,
+          'failed_login',
+          'auth',
+          { reason: 'account_locked', lockUntil: user.lockUntil },
+          req,
+          'failure',
+          'medium'
+        );
+      } catch (auditError) {
+        console.error('Audit log error:', auditError.message);
+      }
       
       return res.status(423).json({
         status: 'error',

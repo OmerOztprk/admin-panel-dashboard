@@ -1,160 +1,142 @@
-const AuditLog = require('../models/AuditLog');
 const APIResponse = require('../utils/response');
+const { auditService } = require('../services');
 
-// Get audit logs (Admin only)
-exports.getAuditLogs = async (req, res, next) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const sortBy = req.query.sortBy || 'createdAt';
-    const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
-    
-    // Filters
-    const userId = req.query.userId;
-    const action = req.query.action;
-    const resource = req.query.resource;
-    const status = req.query.status;
-    const severity = req.query.severity;
-    const ipAddress = req.query.ipAddress;
-    const dateFrom = req.query.dateFrom;
-    const dateTo = req.query.dateTo;
+/**
+ * Audit Controller
+ * Handles HTTP requests and delegates business logic to AuditService
+ */
+class AuditController {
 
-    // Build filter object
-    const filter = {};
-    if (userId) filter.userId = userId;
-    if (action) filter.action = action;
-    if (resource) filter.resource = resource;
-    if (status) filter.status = status;
-    if (severity) filter.severity = severity;
-    if (ipAddress) filter.ipAddress = ipAddress;
-    
-    if (dateFrom || dateTo) {
-      filter.createdAt = {};
-      if (dateFrom) filter.createdAt.$gte = new Date(dateFrom);
-      if (dateTo) filter.createdAt.$lte = new Date(dateTo);
+  // Get audit logs with filtering and pagination
+  async getAuditLogs(req, res, next) {
+    try {
+      const userContext = {
+        userId: req.user.id,
+        role: req.user.role.name,
+        level: req.user.role.level
+      };
+
+      const result = await auditService.getAuditLogs(req.query, userContext);
+
+      APIResponse.success(res, result, 'Audit logs retrieved successfully');
+    } catch (error) {
+      next(error);
     }
-
-    // Calculate skip
-    const skip = (page - 1) * limit;
-
-    // Get audit logs with pagination
-    const auditLogs = await AuditLog.find(filter)
-      .populate('userId', 'name email role')
-      .sort({ [sortBy]: sortOrder })
-      .skip(skip)
-      .limit(limit);
-
-    // Get total count
-    const total = await AuditLog.countDocuments(filter);
-
-    // Calculate pagination info
-    const totalPages = Math.ceil(total / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
-
-    APIResponse.success(res, {
-      auditLogs,
-      pagination: {
-        currentPage: page,
-        totalPages,
-        totalLogs: total,
-        hasNextPage,
-        hasPrevPage,
-        limit
-      }
-    }, 'Audit logs retrieved successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Get user activity (Admin/Moderator or own activity)
-exports.getUserActivity = async (req, res, next) => {
-  try {
-    const userId = req.params.userId;
-    
-    // Check if user can access this data
-    if (req.user.role === 'user' && userId !== req.user.id.toString()) {
-      return APIResponse.forbidden(res, 'You can only view your own activity');
+  // Get user activity logs
+  async getUserActivity(req, res, next) {
+    try {
+      const userContext = {
+        userId: req.user.id,
+        role: req.user.role.name,
+        level: req.user.role.level
+      };
+
+      const result = await auditService.getUserActivity(
+        req.params.userId, 
+        req.query, 
+        userContext
+      );
+
+      APIResponse.success(res, result, 'User activity retrieved successfully');
+    } catch (error) {
+      next(error);
     }
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const action = req.query.action;
-
-    const filter = { userId };
-    if (action) filter.action = action;
-
-    const skip = (page - 1) * limit;
-
-    const activities = await AuditLog.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await AuditLog.countDocuments(filter);
-
-    APIResponse.success(res, {
-      activities,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalActivities: total,
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1,
-        limit
-      }
-    }, 'User activity retrieved successfully');
-
-  } catch (error) {
-    next(error);
   }
-};
 
-// Get security events (Admin only)
-exports.getSecurityEvents = async (req, res, next) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+  // Get security events
+  async getSecurityEvents(req, res, next) {
+    try {
+      const result = await auditService.getSecurityEvents(req.query);
 
-    // Security related events
-    const securityActions = [
-      'failed_login', 'account_locked', 'password_change', 
-      'role_change', 'status_change', 'force_logout'
-    ];
+      // Create audit log for viewing security events
+      await auditService.createLog(
+        req.user.id,
+        'security_events_view',
+        'audit',
+        { 
+          filters: req.query,
+          eventCount: result.data.length,
+          viewedBy: req.user.email
+        },
+        req,
+        'success',
+        'medium'
+      );
 
-    const filter = {
-      $or: [
-        { action: { $in: securityActions } },
-        { status: 'failure' },
-        { severity: { $in: ['high', 'critical'] } }
-      ]
-    };
-
-    const skip = (page - 1) * limit;
-
-    const securityEvents = await AuditLog.find(filter)
-      .populate('userId', 'name email role')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await AuditLog.countDocuments(filter);
-
-    APIResponse.success(res, {
-      securityEvents,
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalEvents: total,
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1,
-        limit
-      }
-    }, 'Security events retrieved successfully');
-
-  } catch (error) {
-    next(error);
+      APIResponse.success(res, result, 'Security events retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
   }
+
+  // Get audit statistics and analytics
+  async getAuditStatistics(req, res, next) {
+    try {
+      const { dateFrom, dateTo } = req.query;
+      const dateRange = { dateFrom, dateTo };
+      
+      const stats = await auditService.getAuditStatistics(dateRange);
+
+      // Create audit log
+      await auditService.createLog(
+        req.user.id,
+        'audit_statistics',
+        'audit',
+        { 
+          dateRange,
+          requestedBy: req.user.email,
+          statsType: 'comprehensive_audit_overview'
+        },
+        req,
+        'success',
+        'low'
+      );
+
+      APIResponse.success(res, stats, 'Audit statistics retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Clean old audit logs (Admin only)
+  async cleanOldLogs(req, res, next) {
+    try {
+      const { daysToKeep = 90 } = req.body;
+      
+      const result = await auditService.cleanOldLogs(daysToKeep);
+
+      // Create audit log for cleanup action
+      await auditService.createLog(
+        req.user.id,
+        'audit_cleanup',
+        'audit',
+        { 
+          deletedCount: result.deletedCount,
+          daysKept: result.daysKept,
+          cutoffDate: result.cutoffDate,
+          cleanedBy: req.user.email
+        },
+        req,
+        'success',
+        'high'
+      );
+
+      APIResponse.success(res, result, 'Old audit logs cleaned successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+
+// Export instance methods
+const auditController = new AuditController();
+
+module.exports = {
+  getAuditLogs: auditController.getAuditLogs.bind(auditController),
+  getUserActivity: auditController.getUserActivity.bind(auditController),
+  getSecurityEvents: auditController.getSecurityEvents.bind(auditController),
+  getAuditStatistics: auditController.getAuditStatistics.bind(auditController),
+  cleanOldLogs: auditController.cleanOldLogs.bind(auditController)
 };

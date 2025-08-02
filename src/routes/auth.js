@@ -2,8 +2,8 @@ const express = require('express');
 const authController = require('../controllers/authController');
 const { protect } = require('../middlewares/auth');
 const { 
-  validateRegister, 
-  validateLogin, 
+  validateRegister,
+  validateLogin,
   validateUpdateUser,
   validateChangePassword,
   handleValidationErrors 
@@ -12,35 +12,15 @@ const {
 const router = express.Router();
 
 // Public routes
-router.post('/register', 
-  validateRegister, 
-  handleValidationErrors, 
-  authController.register
-);
-
-router.post('/login', 
-  validateLogin, 
-  handleValidationErrors, 
-  authController.login
-);
+router.post('/register', validateRegister, handleValidationErrors, authController.register);
+router.post('/login', validateLogin, handleValidationErrors, authController.login);
 
 // Protected routes
 router.use(protect); // All routes after this middleware are protected
 
 router.get('/profile', authController.getProfile);
-
-router.put('/profile', 
-  validateUpdateUser, 
-  handleValidationErrors, 
-  authController.updateProfile
-);
-
-router.put('/change-password', 
-  validateChangePassword, 
-  handleValidationErrors, 
-  authController.changePassword
-);
-
+router.put('/profile', validateUpdateUser, handleValidationErrors, authController.updateProfile);
+router.put('/change-password', validateChangePassword, handleValidationErrors, authController.changePassword);
 router.post('/logout', authController.logout);
 router.post('/logout-all', authController.forceLogoutAll);
 

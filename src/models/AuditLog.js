@@ -5,23 +5,36 @@ const auditLogSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     index: true,
-    required: true
+    default: null // null allowed for anonymous actions
   },
   action: {
     type: String,
     required: true,
     enum: [
-      'login', 'logout', 'register', 'password_change', 'profile_update',
-      'user_create', 'user_update', 'user_delete', 'failed_login',
-      'account_locked', 'password_reset', 'role_change', 'status_change',
+      // Auth actions
+      'login', 'logout', 'register', 'password_change', 'profile_update', 'failed_login',
+      
+      // User actions
+      'create', 'read', 'update', 'delete', 'list', 'view', 'search', 'statistics',
+      
+      // Role actions
+      'role_change', 'permission_assign', 'additional_role_add', 'additional_role_remove',
+      
+      // System actions
+      'account_locked', 'password_reset', 'status_change', 'access_denied',
       'user_list_access', 'user_profile_access', 'user_stats_access',
-      'access_denied'
+      
+      // Audit actions
+      'security_events_view', 'audit_statistics', 'audit_cleanup',
+      
+      // General actions
+      'categories', 'hierarchy', 'bulk_update'
     ]
   },
   resource: {
     type: String,
     required: true,
-    enum: ['user', 'auth', 'system']
+    enum: ['user', 'auth', 'system', 'role', 'permission', 'audit', 'content', 'settings']
   },
   resourceId: {
     type: String,

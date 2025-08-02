@@ -7,11 +7,9 @@ const router = express.Router();
 // All routes are protected
 router.use(protect);
 
-// Admin only routes
+// Audit management routes
 router.get('/logs', adminOnly, auditController.getAuditLogs);
 router.get('/security-events', adminOnly, auditController.getSecurityEvents);
-
-// Admin/Moderator or own data
 router.get('/user/:userId', adminOrModerator, auditController.getUserActivity);
 
 module.exports = router;
